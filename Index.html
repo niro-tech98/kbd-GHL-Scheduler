@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PRESTO → GHL Scheduler</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,400;0,500;1,400&family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap');
+
+  :root {
+    --bg: #0c0e0d;
+    --surface: #131513;
+    --surface2: #191c19;
+    --surface3: #1f231f;
+    --border: #272b27;
+    --border2: #303530;
+    --green: #7eff6e;
+    --green-dim: #2e5929;
+    --green-glow: rgba(126,255,110,0.08);
+    --red: #ff6b6b;
+    --red-dim: #3d1a1a;
+    --yellow: #ffd166;
+    --yellow-dim: #3d300d;
+    --blue: #6eb4ff;
+    --blue-dim: #1a2e3d;
+    --text: #dfe8e0;
+    --text-muted: #6b776c;
+    --text-dim: #3d453e;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; min-height: 100vh; font-size: 14px; overflow: hidden; }
+
+  .header {
+    height: 56px; padding: 0 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--bg); z-index: 50; position: relative;
+  }
+  .logo { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 16px; display: flex; align-items: center; gap: 10px; }
+  .logo-mark { background: var(--green); color: #0c0e0d; padding: 2px 8px; border-radius: 4px; font-size: 13px; }
+  .logo-sub { color: var(--text-muted); font-weight: 400; font-size: 13px; }
+  .header-right { display: flex; gap: 8px; align-items: center; }
+  .status-pill { display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 20px; font-family: 'DM Mono', monospace; font-size: 11px; border: 1px solid var(--border2); background: var(--surface2); color: var(--text-muted); }
+  .status-pill .dot { width: 5px; height: 5px; border-radius: 50%; }
+  .status-pill.ok .dot { background: var(--green); box-shadow: 0 0 5px var(--green); }
+  .status-pill.warn .dot { background: var(--yellow); animation: blink 1.4s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
+
+  .layout { display: grid; grid-template-columns: 340px 1fr; height: calc(100vh - 56px); }
+
+  /* LEFT */
+  .panel-left { border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; background: var(--surface); }
+  .panel-toolbar { padding: 12px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+  .queue-stats { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--text-muted); }
+  .queue-stats strong { color: var(--green); }
+  .posts-scroll { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 5px; }
+  .posts-scroll::-webkit-scrollbar { width: 3px; }
+  .posts-scroll::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+  .queue-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; gap: 8px; color: var(--text-dim); padding: 24px; text-align: center; }
+  .queue-empty-icon { font-size: 30px; opacity: .3; }
+  .queue-empty p { font-size: 12px; line-height: 1.6; }
+  .queue-empty code { font-family: 'DM Mono', monospace; font-size: 11px; background: var(--surface3); padding: 2px 6px; border-radius: 3px; color: var(--green); }
+
+  .schedule-bar { padding: 12px 14px; border-top: 1px solid var(--border); background: var(--surface); flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .schedule-bar-info { font-size: 12px; color: var(--text-muted); }
+  .schedule-bar-info strong { color: var(--text); }
+
+  /* CARDS */
+  .post-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 11px 12px; cursor: pointer; transition: all .12s; position: relative; user-select: none; }
+  .post-card:hover { border-color: var(--border2); background: var(--surface3); }
+  .post-card.active { border-color: var(--green); background: var(--surface3); }
+  .post-card.active::before { content: ''; position: absolute; left: 0; top: 4px; bottom: 4px; width: 2px; background: var(--green); border-radius: 0 2px 2px 0; }
+  .post-card.status-scheduled { border-color: var(--green-dim); }
+  .post-card.status-error { border-color: rgba(255,107,107,.3); }
+  .card-row1 { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; }
+  .card-date { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--text-muted); }
+  .card-platforms { display: flex; gap: 3px; }
+  .ptag { font-size: 10px; padding: 1px 5px; border-radius: 3px; font-family: 'DM Mono', monospace; font-weight: 500; }
+  .ptag.fb { background: rgba(66,103,178,.2); color: #7a9fd4; }
+  .ptag.ig { background: rgba(225,48,108,.2); color: #f07ca0; }
+  .ptag.ig.warn { background: var(--yellow-dim); color: var(--yellow); }
+  .card-title { font-size: 13px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
+  .card-meta { font-size: 11px; color: var(--text-dim); }
+  .card-status-row { display: flex; align-items: center; justify-content: space-between; margin-top: 7px; }
+  .status-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-family: 'DM Mono', monospace; padding: 2px 6px; border-radius: 3px; }
+  .status-badge.draft { color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); }
+  .status-badge.ready { color: var(--blue); background: var(--blue-dim); border: 1px solid rgba(110,180,255,.2); }
+  .status-badge.scheduled { color: var(--green); background: var(--green-glow); border: 1px solid var(--green-dim); }
+  .status-badge.error { color: var(--red); background: var(--red-dim); border: 1px solid rgba(255,107,107,.2); }
+  .card-media { font-size: 10px; color: var(--text-dim); }
+  .card-media.has { color: var(--green); }
+
+  /* BUTTONS */
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 13px; border-radius: 7px; font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 500; cursor: pointer; border: none; transition: all .15s; white-space: nowrap; }
+  .btn-ghost { background: transparent; color: var(--text-muted); border: 1px solid var(--border2); }
+  .btn-ghost:hover { color: var(--text); border-color: var(--text-muted); }
+  .btn-green { background: var(--green); color: #0c0e0d; font-weight: 600; }
+  .btn-green:hover { background: #92ff84; transform: translateY(-1px); }
+  .btn-green:disabled { background: var(--green-dim); color: var(--text-dim); cursor: not-allowed; transform: none; }
+  .btn-outline { background: var(--green-glow); color: var(--green); border: 1px solid var(--green-dim); }
+  .btn-outline:hover { background: rgba(126,255,110,.14); }
+  .btn-sm { padding: 5px 10px; font-size: 12px; }
+
+  /* RIGHT */
+  .panel-right { display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
+  .right-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--text-dim); padding: 40px; text-align: center; }
+  .right-empty-icon { font-size: 36px; opacity: .2; }
+  .right-empty h3 { font-family: 'Syne', sans-serif; font-size: 15px; font-weight: 700; color: var(--text-dim); }
+  .right-empty p { font-size: 12px; max-width: 260px; line-height: 1.6; }
+
+  .editor { display: flex; flex-direction: column; height: 100%; }
+  .editor-header { padding: 14px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+  .editor-header-left { display: flex; align-items: center; gap: 10px; }
+  .editor-date { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 15px; }
+  .editor-tag { font-size: 11px; padding: 3px 8px; border-radius: 4px; font-family: 'DM Mono', monospace; background: var(--green-glow); color: var(--green); border: 1px solid var(--green-dim); }
+  .editor-actions { display: flex; gap: 7px; }
+
+  .editor-body { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 18px; }
+  .editor-body::-webkit-scrollbar { width: 3px; }
+  .editor-body::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+  .field { display: flex; flex-direction: column; gap: 7px; }
+  .field-label { font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--text-muted); font-family: 'DM Mono', monospace; display: flex; align-items: center; gap: 6px; }
+  .field-label .opt { font-size: 9px; color: var(--text-dim); font-weight: 400; text-transform: none; letter-spacing: 0; }
+  .finput { background: var(--surface); border: 1px solid var(--border2); border-radius: 8px; padding: 9px 12px; color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 13px; outline: none; width: 100%; transition: border-color .15s; }
+  .finput:focus { border-color: var(--green-dim); }
+  .finput::placeholder { color: var(--text-dim); }
+  textarea.finput { resize: vertical; min-height: 120px; line-height: 1.6; }
+  .finput[type="datetime-local"] { color-scheme: dark; }
+  select.finput { cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236b776c' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px; }
+
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  .plat-toggles { display: flex; gap: 8px; }
+  .plat-toggle { display: flex; align-items: center; gap: 7px; padding: 8px 12px; border-radius: 7px; border: 1px solid var(--border2); background: var(--surface); cursor: pointer; transition: all .15s; user-select: none; font-size: 13px; font-weight: 500; color: var(--text-muted); }
+  .plat-toggle .check { width: 15px; height: 15px; border-radius: 4px; border: 1px solid var(--border2); display: flex; align-items: center; justify-content: center; font-size: 9px; }
+  .plat-toggle.fb-on { border-color: rgba(66,103,178,.5); background: rgba(66,103,178,.1); color: #7a9fd4; }
+  .plat-toggle.fb-on .check { background: #4267B2; border-color: #4267B2; }
+  .plat-toggle.ig-on { border-color: rgba(225,48,108,.4); background: rgba(225,48,108,.1); color: #f07ca0; }
+  .plat-toggle.ig-on .check { background: #E1306C; border-color: #E1306C; }
+
+  .ig-warn { background: var(--yellow-dim); border: 1px solid rgba(255,209,102,.25); border-radius: 7px; padding: 9px 12px; font-size: 12px; color: var(--yellow); line-height: 1.5; }
+
+  .media-area { background: var(--surface); border: 1px dashed var(--border2); border-radius: 8px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .media-row { display: flex; gap: 10px; align-items: flex-start; }
+  .media-thumb { width: 54px; height: 54px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); overflow: hidden; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 18px; color: var(--text-dim); }
+  .media-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .media-info { flex: 1; min-width: 0; }
+  .media-filename { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
+  .media-hint { font-size: 11px; color: var(--text-dim); line-height: 1.5; }
+  .media-url-row { display: flex; gap: 7px; align-items: center; }
+
+  .editor-footer { padding: 12px 24px; border-top: 1px solid var(--border); background: var(--surface); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+  .footer-info { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--text-muted); }
+  .footer-info strong { color: var(--text); }
+  .footer-status-label { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--text-dim); }
+
+  .toast { position: fixed; bottom: 20px; right: 20px; padding: 11px 16px; border-radius: 8px; font-size: 13px; font-weight: 500; z-index: 9999; opacity: 0; transform: translateY(12px); transition: all .25s cubic-bezier(.34,1.56,.64,1); pointer-events: none; max-width: 300px; }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.success { background: rgba(126,255,110,.12); border: 1px solid var(--green-dim); color: var(--green); }
+  .toast.error { background: var(--red-dim); border: 1px solid rgba(255,107,107,.3); color: var(--red); }
+  .toast.info { background: var(--surface2); border: 1px solid var(--border2); color: var(--text); }
+
+  .spin { width: 13px; height: 13px; border-radius: 50%; border: 2px solid rgba(12,14,13,.3); border-top-color: #0c0e0d; animation: rot .5s linear infinite; display: inline-block; }
+  @keyframes rot { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">
+    <span class="logo-mark">PRESTO</span>
+    <span class="logo-sub">→ GHL Scheduler</span>
+  </div>
+  <div class="header-right">
+    <div class="status-pill ok"><div class="dot"></div>Facebook · Connected</div>
+    <div class="status-pill ok"><div class="dot"></div>Instagram · Connected</div>
+  </div>
+</div>
+
+<div class="layout">
+
+  <!-- LEFT: Queue -->
+  <div class="panel-left">
+    <div class="panel-toolbar">
+      <div class="queue-stats" id="queueStats"><strong>0</strong> posts · <strong>0</strong> ready</div>
+      <button class="btn btn-outline btn-sm" onclick="addNewPost()">+ New Post</button>
+    </div>
+
+    <div class="posts-scroll" id="postsList">
+      <div class="queue-empty" id="queueEmpty">
+        <div class="queue-empty-icon">📭</div>
+        <p>Queue is empty.<br><br>Cowork fills this automatically with post caption, schedule date, and Drive media link.<br><br>Or add a post manually above.</p>
+      </div>
+    </div>
+
+    <div class="schedule-bar">
+      <div class="schedule-bar-info" id="barInfo">No posts queued</div>
+      <button class="btn btn-green btn-sm" id="scheduleAllBtn" onclick="scheduleAll()" disabled>Schedule All</button>
+    </div>
+  </div>
+
+  <!-- RIGHT: Editor -->
+  <div class="panel-right" id="panelRight">
+
+    <div class="right-empty" id="rightEmpty">
+      <div class="right-empty-icon">✦</div>
+      <h3>No post selected</h3>
+      <p>Select a post from the queue to review and edit before scheduling to GHL.</p>
+    </div>
+
+    <div class="editor" id="editor" style="display:none;">
+      <div class="editor-header">
+        <div class="editor-header-left">
+          <div class="editor-date" id="editorDate">—</div>
+          <div class="editor-tag" id="editorTag">—</div>
+        </div>
+        <div class="editor-actions">
+          <button class="btn btn-ghost btn-sm" onclick="deleteActive()">Remove</button>
+          <button class="btn btn-green btn-sm" id="schedOneBtn" onclick="scheduleOne()">Schedule Post</button>
+        </div>
+      </div>
+
+      <div class="editor-body">
+
+        <div class="field">
+          <div class="field-label">Post Title <span class="opt">· internal only</span></div>
+          <input type="text" class="finput" id="fTitle" placeholder="e.g. Terpenes Carousel · Week 1" />
+        </div>
+
+        <div class="field">
+          <div class="field-label">Platforms</div>
+          <div class="plat-toggles">
+            <div class="plat-toggle fb-on" id="fbToggle" onclick="togglePlat('facebook')">
+              <div class="check">✓</div> Facebook
+            </div>
+            <div class="plat-toggle ig-on" id="igToggle" onclick="togglePlat('instagram')">
+              <div class="check">✓</div> Instagram
+            </div>
+          </div>
+          
+        </div>
+
+        <div class="field">
+          <div class="field-label">Caption</div>
+          <textarea class="finput" id="fCaption" placeholder="Post caption with hashtags..."></textarea>
+        </div>
+
+        <div class="row2">
+          <div class="field">
+            <div class="field-label">Schedule Date & Time</div>
+            <input type="datetime-local" class="finput" id="fSchedule" />
+          </div>
+          <div class="field">
+            <div class="field-label">Format</div>
+            <select class="finput" id="fFormat">
+              <option value="post">Static / Carousel</option>
+              <option value="reel">Reel</option>
+              <option value="story">Story</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="field-label">Media Asset <span class="opt">· from Google Drive</span></div>
+          <div class="media-area">
+            <div class="media-row">
+              <div class="media-thumb" id="mediaThumb">📁</div>
+              <div class="media-info">
+                <div class="media-filename" id="mediaFilename">No asset linked</div>
+                <div class="media-hint" id="mediaHint">Cowork attaches this automatically from the KBD Social Media Calendar folder on Drive.</div>
+              </div>
+            </div>
+            <div class="media-url-row">
+              <input type="text" class="finput" id="fMediaUrl" placeholder="Paste Google Drive file URL to attach manually..." style="flex:1;" />
+              <button class="btn btn-ghost btn-sm" onclick="applyMedia()">Apply</button>
+              <button class="btn btn-ghost btn-sm" onclick="clearMedia()">Clear</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="editor-footer">
+        <div class="footer-info" id="footerInfo">—</div>
+        <div class="footer-status-label" id="footerLabel">DRAFT</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API_KEY     = 'pit-7a3b77b0-9349-46b8-a587-af5680efe921';
+const LOCATION_ID = 'Y6BG0ejEUqqSMLVUKJPa';
+const FB_ID       = '6809567e201338ba91fb64b8_Y6BG0ejEUqqSMLVUKJPa_581521951719524_page';
+const IG_ID       = '680956e4f919aece7236892b_Y6BG0ejEUqqSMLVUKJPa_17841473369167286';
+const DRIVE_FOLDER_ID = '16J6ne0RwMMWt4VFhLcAgr58XS1RfLkan'; // KBD social media calendar
+
+let posts = [];
+let activeId = null;
+let nextId = 1;
+
+// ── PUBLIC API for Cowork ─────────────────────────────────
+// window.addPost({ title, caption, scheduleTime, platforms, format, mediaUrl, mediaFilename })
+window.addPost = function(data) {
+  const post = {
+    id:            nextId++,
+    title:         data.title         || 'Untitled Post',
+    caption:       data.caption       || '',
+    scheduleTime:  data.scheduleTime  || '',
+    platforms:     data.platforms     || ['facebook', 'instagram'],
+    format:        data.format        || 'post',
+    mediaUrl:      data.mediaUrl      || '',
+    mediaFilename: data.mediaFilename || '',
+    status:        'ready',
+  };
+  posts.push(post);
+  renderList();
+  toast(`Added: "${post.title}"`, 'info');
+  return post.id;
+};
+
+window.clearQueue = function() {
+  posts = posts.filter(p => p.status === 'scheduled');
+  activeId = null;
+  showRightEmpty();
+  renderList();
+};
+
+// ── MANUAL ADD ────────────────────────────────────────────
+function addNewPost() {
+  const id = nextId;
+  posts.push({ id: nextId++, title: 'New Post', caption: '', scheduleTime: '', platforms: ['facebook','instagram'], format: 'post', mediaUrl: '', mediaFilename: '', status: 'draft' });
+  renderList();
+  selectPost(id);
+  setTimeout(() => document.getElementById('fTitle').focus(), 50);
+}
+
+// ── RENDER LIST ───────────────────────────────────────────
+function renderList() {
+  const list  = document.getElementById('postsList');
+  const empty = document.getElementById('queueEmpty');
+  const ready = posts.filter(p => p.status === 'ready' || p.status === 'draft').length;
+  const sched = posts.filter(p => p.status === 'scheduled').length;
+
+  document.getElementById('queueStats').innerHTML = `<strong>${posts.length}</strong> posts · <strong>${ready}</strong> ready`;
+  document.getElementById('scheduleAllBtn').disabled = ready === 0;
+  document.getElementById('barInfo').innerHTML = posts.length
+    ? `<strong>${ready}</strong> draft${ready !== 1 ? 's' : ''} · <strong>${sched}</strong> scheduled`
+    : 'No posts queued';
+
+  empty.style.display = posts.length ? 'none' : 'flex';
+  list.querySelectorAll('.post-card').forEach(el => el.remove());
+
+  posts.forEach(p => {
+    const el = document.createElement('div');
+    el.className = `post-card status-${p.status}${p.id === activeId ? ' active' : ''}`;
+    el.onclick = () => selectPost(p.id);
+
+    const dateStr = p.scheduleTime
+      ? new Date(p.scheduleTime).toLocaleDateString('en-US', {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})
+      : '— No date';
+
+    const fbTag = p.platforms.includes('facebook') ? '<span class="ptag fb">FB</span>' : '';
+    const igTag = p.platforms.includes('instagram') ? `<span class="ptag ig${p.status!=='scheduled'?' warn':''}">IG</span>` : '';
+
+    const slabels = {draft:'○ Draft', ready:'● Ready', scheduled:'✓ Scheduled', error:'✗ Failed'};
+
+    el.innerHTML = `
+      <div class="card-row1">
+        <span class="card-date">${dateStr}</span>
+        <span class="card-platforms">${fbTag}${igTag}</span>
+      </div>
+      <div class="card-title">${p.title}</div>
+      <div class="card-meta">${p.format.charAt(0).toUpperCase()+p.format.slice(1)}</div>
+      <div class="card-status-row">
+        <span class="status-badge ${p.status}">${slabels[p.status]||p.status}</span>
+        <span class="card-media ${p.mediaUrl?'has':''}">${p.mediaUrl?'⬡ Media':'○ No media'}</span>
+      </div>`;
+    list.appendChild(el);
+  });
+}
+
+// ── SELECT ────────────────────────────────────────────────
+function selectPost(id) {
+  if (activeId && activeId !== id) saveEdits(activeId);
+  activeId = id;
+  const p = posts.find(x => x.id === id);
+  if (!p) return;
+
+  document.getElementById('rightEmpty').style.display = 'none';
+  document.getElementById('editor').style.display = 'flex';
+
+  document.getElementById('editorDate').textContent = p.scheduleTime
+    ? new Date(p.scheduleTime).toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})
+    : 'No date set';
+  document.getElementById('editorTag').textContent = p.format.charAt(0).toUpperCase() + p.format.slice(1);
+
+  document.getElementById('fTitle').value    = p.title;
+  document.getElementById('fCaption').value  = p.caption;
+  document.getElementById('fSchedule').value = p.scheduleTime || '';
+  document.getElementById('fFormat').value   = p.format;
+  document.getElementById('fMediaUrl').value = p.mediaUrl || '';
+
+  updatePlatToggles(p.platforms);
+  updateMediaPreview(p);
+  updateFooter(p);
+  renderList();
+}
+
+function showRightEmpty() {
+  document.getElementById('rightEmpty').style.display = 'flex';
+  document.getElementById('editor').style.display = 'none';
+}
+
+// ── SAVE EDITS ────────────────────────────────────────────
+function saveEdits(id) {
+  const p = posts.find(x => x.id === id);
+  if (!p) return;
+  p.title        = document.getElementById('fTitle').value;
+  p.caption      = document.getElementById('fCaption').value;
+  p.scheduleTime = document.getElementById('fSchedule').value;
+  p.format       = document.getElementById('fFormat').value;
+  p.mediaUrl     = document.getElementById('fMediaUrl').value;
+  if (!p.mediaFilename && p.mediaUrl) p.mediaFilename = shortenUrl(p.mediaUrl);
+  if (p.status !== 'scheduled') {
+    p.status = (p.caption.trim() && p.scheduleTime && p.platforms.length) ? 'ready' : 'draft';
+  }
+}
+
+// ── PLATFORM TOGGLE ───────────────────────────────────────
+function togglePlat(plat) {
+  const p = posts.find(x => x.id === activeId);
+  if (!p) return;
+  const i = p.platforms.indexOf(plat);
+  if (i > -1) { if (p.platforms.length > 1) p.platforms.splice(i,1); }
+  else p.platforms.push(plat);
+  updatePlatToggles(p.platforms);
+  updateFooter(p);
+  renderList();
+}
+
+function updatePlatToggles(plats) {
+  const fb = document.getElementById('fbToggle');
+  const ig = document.getElementById('igToggle');
+  const on = plats.includes('facebook');
+  fb.className = 'plat-toggle' + (on ? ' fb-on' : '');
+  fb.querySelector('.check').textContent = on ? '✓' : '';
+  const ign = plats.includes('instagram');
+  ig.className = 'plat-toggle' + (ign ? ' ig-on' : '');
+  ig.querySelector('.check').textContent = ign ? '✓' : '';
+}
+
+// ── MEDIA ─────────────────────────────────────────────────
+function updateMediaPreview(p) {
+  const thumb = document.getElementById('mediaThumb');
+  const fname = document.getElementById('mediaFilename');
+  const hint  = document.getElementById('mediaHint');
+  if (p.mediaUrl) {
+    const isVid = /\.(mp4|mov|webm)/i.test(p.mediaUrl) || /\.(mp4|mov|webm)/i.test(p.mediaFilename||'');
+    if (isVid) { thumb.innerHTML = '🎬'; }
+    else {
+      const fid = extractDriveId(p.mediaUrl);
+      thumb.innerHTML = fid
+        ? `<img src="https://drive.google.com/thumbnail?id=${fid}&sz=w100" onerror="this.parentElement.innerHTML='🖼️'" />`
+        : '🖼️';
+    }
+    fname.textContent = p.mediaFilename || shortenUrl(p.mediaUrl);
+    hint.textContent  = 'From Google Drive';
+  } else {
+    thumb.innerHTML   = '📁';
+    fname.textContent = 'No asset linked';
+    hint.textContent  = 'Cowork attaches this automatically from the KBD Social Media Calendar folder on Drive.';
+  }
+}
+
+function applyMedia() {
+  const p = posts.find(x => x.id === activeId);
+  if (!p) return;
+  p.mediaUrl = document.getElementById('fMediaUrl').value.trim();
+  p.mediaFilename = shortenUrl(p.mediaUrl);
+  updateMediaPreview(p);
+  updateFooter(p);
+  renderList();
+}
+
+function clearMedia() {
+  const p = posts.find(x => x.id === activeId);
+  if (!p) return;
+  p.mediaUrl = ''; p.mediaFilename = '';
+  document.getElementById('fMediaUrl').value = '';
+  updateMediaPreview(p);
+  updateFooter(p);
+  renderList();
+}
+
+// ── FOOTER ────────────────────────────────────────────────
+function updateFooter(p) {
+  const missing = [];
+  if (!p.caption.trim()) missing.push('caption');
+  if (!p.scheduleTime)   missing.push('schedule time');
+  if (!p.mediaUrl)       missing.push('media');
+
+  const info  = document.getElementById('footerInfo');
+  const label = document.getElementById('footerLabel');
+
+  if (missing.length === 0) {
+    info.innerHTML = `Ready → <strong>${p.platforms.join(' + ')}</strong>`;
+    label.textContent = 'READY';
+    label.style.color = 'var(--green)';
+  } else {
+    info.textContent = `Missing: ${missing.join(', ')}`;
+    label.textContent = p.status.toUpperCase();
+    label.style.color = 'var(--text-dim)';
+  }
+}
+
+// ── DELETE ────────────────────────────────────────────────
+function deleteActive() {
+  posts = posts.filter(x => x.id !== activeId);
+  activeId = null;
+  showRightEmpty();
+  renderList();
+}
+
+// ── SCHEDULE ONE ──────────────────────────────────────────
+async function scheduleOne() {
+  if (!activeId) return;
+  saveEdits(activeId);
+  const p = posts.find(x => x.id === activeId);
+  const btn = document.getElementById('schedOneBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span> Scheduling...';
+
+  const r = await pushToGHL(p);
+  p.status = r.success ? 'scheduled' : 'error';
+  if (r.success) toast(`✓ "${p.title}" scheduled`, 'success');
+  else toast(`Failed: ${r.error}`, 'error');
+
+  btn.disabled = false;
+  btn.innerHTML = 'Schedule Post';
+  updateFooter(p);
+  renderList();
+}
+
+// ── SCHEDULE ALL ──────────────────────────────────────────
+async function scheduleAll() {
+  if (activeId) saveEdits(activeId);
+  const queue = posts.filter(p => p.status === 'ready' || p.status === 'draft');
+  const btn = document.getElementById('scheduleAllBtn');
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
+
+  let ok = 0, fail = 0;
+  for (const p of queue) {
+    const r = await pushToGHL(p);
+    p.status = r.success ? 'scheduled' : 'error';
+    r.success ? ok++ : fail++;
+    renderList();
+    await new Promise(r => setTimeout(r, 350));
+  }
+
+  btn.disabled = false; btn.innerHTML = 'Schedule All';
+  toast(fail === 0 ? `✓ All ${ok} posts scheduled` : `${ok} scheduled · ${fail} failed`, fail ? 'error' : 'success');
+  if (activeId) { const p = posts.find(x => x.id === activeId); if (p) updateFooter(p); }
+  renderList();
+}
+
+// ── GHL API ───────────────────────────────────────────────
+async function pushToGHL(p) {
+  const accountIds = [
+    ...(p.platforms.includes('facebook')  ? [FB_ID] : []),
+    ...(p.platforms.includes('instagram') ? [IG_ID] : []),
+  ];
+
+  const body = {
+    summary:      p.caption || '(no caption)',
+    accountIds,
+    scheduleDate: p.scheduleTime ? new Date(p.scheduleTime).toISOString() : new Date(Date.now()+3600000).toISOString(),
+    status:       'scheduled',
+    facebookPostDetails:  { type: 'post' },
+    instagramPostDetails: { type: p.format === 'reel' ? 'reel' : 'post' },
+  };
+
+  if (p.mediaUrl) {
+    const isVid = /\.(mp4|mov|webm)/i.test(p.mediaUrl) || /\.(mp4|mov|webm)/i.test(p.mediaFilename||'');
+    body.media = [{ url: driveDirectUrl(p.mediaUrl), type: isVid ? 'video/mp4' : 'image/jpeg' }];
+  }
+
+  try {
+    const res  = await fetch(`https://services.leadconnectorhq.com/social-media-posting/${LOCATION_ID}/posts`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${API_KEY}`, 'Version': '2021-07-28', 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    return res.ok ? { success: true } : { success: false, error: data.message || JSON.stringify(data) };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+}
+
+// ── UTILS ─────────────────────────────────────────────────
+function extractDriveId(url) {
+  const m = url.match(/\/d\/([a-zA-Z0-9_-]{20,})/);
+  return m ? m[1] : null;
+}
+
+function driveDirectUrl(url) {
+  const id = extractDriveId(url);
+  return id ? `https://drive.google.com/uc?export=download&id=${id}` : url;
+}
+
+function shortenUrl(url) {
+  try { return new URL(url).pathname.split('/').pop() || url.slice(0,40); }
+  catch { return url.slice(0,40); }
+}
+
+function toast(msg, type='info') {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = `toast ${type} show`;
+  setTimeout(() => t.classList.remove('show'), 3500);
+}
+</script>
+</body>
+</html>
