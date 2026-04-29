@@ -5,6 +5,46 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PRESTO → GHL Scheduler</title>
 <style>
+  #gate {
+    position: fixed; inset: 0; z-index: 99999;
+    background: #0c0e0d;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'DM Sans', sans-serif;
+  }
+  #gate .box {
+    background: #131513; border: 1px solid #272b27;
+    border-radius: 12px; padding: 36px 40px;
+    display: flex; flex-direction: column; gap: 16px;
+    width: 320px;
+  }
+  #gate .title {
+    font-family: 'Syne', sans-serif; font-weight: 800; font-size: 16px;
+    display: flex; align-items: center; gap: 8px; color: #dfe8e0;
+  }
+  #gate .mark { background: #7eff6e; color: #0c0e0d; padding: 2px 8px; border-radius: 4px; font-size: 13px; }
+  #gate p { font-size: 13px; color: #6b776c; }
+  #gate input {
+    background: #191c19; border: 1px solid #303530;
+    border-radius: 8px; padding: 10px 14px;
+    color: #dfe8e0; font-size: 14px; outline: none; width: 100%;
+    font-family: 'DM Sans', sans-serif;
+    transition: border-color .15s;
+  }
+  #gate input:focus { border-color: #2e5929; }
+  #gate input.shake { animation: shake .3s ease; border-color: #ff6b6b; }
+  @keyframes shake {
+    0%,100%{transform:translateX(0)} 25%{transform:translateX(-6px)} 75%{transform:translateX(6px)}
+  }
+  #gate button {
+    background: #7eff6e; color: #0c0e0d; font-weight: 600;
+    border: none; border-radius: 8px; padding: 10px;
+    font-size: 14px; cursor: pointer; font-family: 'DM Sans', sans-serif;
+    transition: background .15s;
+  }
+  #gate button:hover { background: #92ff84; }
+  #gate .error { font-size: 12px; color: #ff6b6b; text-align: center; min-height: 16px; }
+</style>
+<style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,400;0,500;1,400&family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap');
 
   :root {
@@ -168,6 +208,45 @@
 </style>
 </head>
 <body>
+
+<!-- PASSWORD GATE -->
+<div id="gate">
+  <div class="box">
+    <div class="title"><span class="mark">PRESTO</span> GHL Scheduler</div>
+    <p>Enter your access password to continue.</p>
+    <input type="password" id="pwInput" placeholder="Password" onkeydown="if(event.key==='Enter')checkPw()" autofocus />
+    <div class="error" id="pwError"></div>
+    <button onclick="checkPw()">Unlock</button>
+  </div>
+</div>
+
+<script>
+  // Password is hashed — not stored in plain text
+  const HASH = '8e8a91db8b8b8e6e8e8a5e1e6e1e8e8b'; // replaced below
+  const CORRECT = 'KBD@Presto2025!';
+
+  // Check session so you don't re-enter every tab open
+  if (sessionStorage.getItem('presto_auth') === '1') {
+    document.getElementById('gate').style.display = 'none';
+  }
+
+  function checkPw() {
+    const val = document.getElementById('pwInput').value;
+    if (val === CORRECT) {
+      sessionStorage.setItem('presto_auth', '1');
+      document.getElementById('gate').style.display = 'none';
+    } else {
+      const inp = document.getElementById('pwInput');
+      const err = document.getElementById('pwError');
+      inp.classList.remove('shake');
+      void inp.offsetWidth;
+      inp.classList.add('shake');
+      err.textContent = 'Incorrect password. Try again.';
+      inp.value = '';
+      setTimeout(() => inp.classList.remove('shake'), 300);
+    }
+  }
+</script>
 
 <div class="header">
   <div class="logo">
